@@ -4,7 +4,8 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { EndReason, Snapshot, Status } from '../types'
 
 const PANE = 'mcs-test-progress'
-const POLL_MS = 3000
+// The runner rewrites the status file about every 4 s, so polling faster than this adds load for nothing.
+const POLL_MS = 5000
 const STALE_SECONDS = 90
 // A run that says it is running but has not written the status file for this long is treated as stopped.
 const STOPPED_AFTER_SECONDS = 300
@@ -75,6 +76,10 @@ let hasSeenActive = false
 let endedAt: number | null = null
 let endReason: EndReason | null = null
 let lastStatusLine: string | undefined
+let lastText: string | undefined
+let lastVisible: boolean | undefined
+let isPolling = false
+let lastEndedAt: number | null = null
 
 async function statusPath($: EngineInterface, options: Record<string, unknown> | undefined): Promise<string> {
   const configured = typeof options?.statusFile === 'string' ? options.statusFile.trim() : ''
@@ -85,13 +90,25 @@ async function statusPath($: EngineInterface, options: Record<string, unknown> |
 }
 
 async function poll($: EngineInterface, options: Record<string, unknown> | undefined): Promise<void> {
+  // A slow read must not stack up more polls behind it.
+  if (isPolling) return
+  isPolling = true
+  try {
+    await pollOnce($, options)
+  } finally {
+    isPolling = false
+  }
+}
+
+async function pollOnce($: EngineInterface, options: Record<string, unknown> | undefined): Promise<void> {
   const path = await statusPath($, options)
   const nowSeconds = (await $.clock.now()) / 1000
   let status: Status | null = null
   let error: string | null = null
+  let text = ''
   try {
-    const text = await $.fs.read(path)
-    status = JSON.parse(String(text)) as Status
+    text = String(await $.fs.read(path))
+    status = JSON.parse(text) as Status
   } catch (failure) {
     error = 'No status file yet at the path below, or it is not valid JSON.'
   }
@@ -130,7 +147,13 @@ async function poll($: EngineInterface, options: Record<string, unknown> | undef
   }
 
   const next: Snapshot = { status, error, path, endedAt, endReason }
-  await update($, snap, () => next)
+  // Only redraw when the file or the visible state changed.
+  const visible = isVisible(next, nowSeconds)
+  const changed = text !== lastText || visible !== lastVisible || endedAt !== lastEndedAt
+  lastText = text
+  lastVisible = visible
+  lastEndedAt = endedAt
+  if (changed) await update($, snap, () => next)
 
   let line: string | undefined
   if (status && isVisible(next, nowSeconds)) {

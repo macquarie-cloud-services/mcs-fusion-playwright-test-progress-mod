@@ -20,7 +20,7 @@ When a run is done - the runner writes `phase: "finished"`, every test has a res
 ## Install
 
 ```
-/plugin install mcs-playwright-test-progress-mod --marketplace <owner>/<repo>
+/plugin install mcs-playwright-test-progress-mod --marketplace mcs-dave/mcs-fusion-playwright-test-progress-mod
 ```
 
 Answer `y` to add the marketplace, then pick a scope. The mod is active at once; no reload is needed. Open the dashboard with `/test-progress`.
@@ -31,7 +31,7 @@ Answer `y` to add the marketplace, then pick a scope. The mod is active at once;
 |---|---|---|
 | **Status file** | `~/.claude/playwright-triage/status.json` | Path to the JSON file your runner writes. |
 
-The mod re-reads the file every 3 seconds.
+The mod re-reads the file every 5 seconds.
 
 ## The status file
 
