@@ -1,11 +1,15 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Snapshot, Status } from '../types'
+import type { EndReason, Snapshot, Status } from '../types'
 
 const PANE = 'mcs-test-progress'
 const POLL_MS = 3000
 const STALE_SECONDS = 90
+// A run that says it is running but has not written the status file for this long is treated as stopped.
+const STOPPED_AFTER_SECONDS = 300
+// How long the band and status line keep the final result on screen after a run ends, then clear themselves.
+const END_LINGER_SECONDS = 60
 
 const snap = atom({ plugin: 'mcs-playwright-test-progress-mod', key: 'snap' } as const, null)
 const isHidden = atom({ plugin: 'mcs-playwright-test-progress-mod', key: 'isHidden' } as const, false)
@@ -35,17 +39,41 @@ const clockTime = (epochSeconds: number): string => {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-const isRunning = (s: Status): boolean => s.phase !== 'finished' && s.phase !== 'idle'
+const isIdle = (s: Status): boolean => s.phase === 'idle'
+
+// Done: the runner says so, every test has a result, or every lane has finished.
+const isDone = (s: Status): boolean =>
+  s.phase === 'finished' ||
+  (s.totals.total > 0 && s.totals.done >= s.totals.total) ||
+  (s.lanes.length > 0 && s.lanes.every(lane => lane.finished))
+
+const isStopped = (s: Status, nowSeconds: number): boolean =>
+  !isDone(s) && !isIdle(s) && nowSeconds - s.updated > STOPPED_AFTER_SECONDS
+
+// Still going: not done, not stopped, not idle.
+const isRunning = (s: Status, nowSeconds: number): boolean =>
+  !isDone(s) && !isIdle(s) && !isStopped(s, nowSeconds)
+
+// What the band and status line show: the live run, or the final result for a minute after it ends.
+const isVisible = (snapshot: Snapshot | null, nowSeconds: number): boolean => {
+  const status = snapshot?.status
+  if (!snapshot || !status || isIdle(status)) return false
+  if (snapshot.endedAt === null) return isRunning(status, nowSeconds)
+
+  return nowSeconds - snapshot.endedAt < END_LINGER_SECONDS
+}
 
 const summary = (s: Status, withEta: boolean): string => {
   const t = s.totals
-  const eta = withEta && s.eta_seconds != null && isRunning(s) ? ` · ETA ${duration(s.eta_seconds)}` : ''
+  const eta = withEta && s.eta_seconds != null ? ` · ETA ${duration(s.eta_seconds)}` : ''
 
   return `${t.done}/${t.total} ✓${t.passed} ✗${t.failed}${t.skipped > 0 ? ` -${t.skipped}` : ''}${eta}`
 }
 
-let lastPhase: string | undefined
-let hasSeenRunning = false
+let runKey: string | undefined
+let hasSeenActive = false
+let endedAt: number | null = null
+let endReason: EndReason | null = null
 let lastStatusLine: string | undefined
 
 async function statusPath($: EngineInterface, options: Record<string, unknown> | undefined): Promise<string> {
@@ -58,34 +86,64 @@ async function statusPath($: EngineInterface, options: Record<string, unknown> |
 
 async function poll($: EngineInterface, options: Record<string, unknown> | undefined): Promise<void> {
   const path = await statusPath($, options)
-  let next: Snapshot
+  const nowSeconds = (await $.clock.now()) / 1000
+  let status: Status | null = null
+  let error: string | null = null
   try {
     const text = await $.fs.read(path)
-    next = { status: JSON.parse(String(text)) as Status, error: null, path }
-  } catch (error) {
-    next = { status: null, error: 'No status file yet at the path below, or it is not valid JSON.', path }
+    status = JSON.parse(String(text)) as Status
+  } catch (failure) {
+    error = 'No status file yet at the path below, or it is not valid JSON.'
   }
+
+  if (status) {
+    // A new run (different start time or build) starts a fresh lifecycle.
+    const key = `${status.started ?? ''}|${status.build ?? ''}`
+    if (key !== runKey) {
+      runKey = key
+      hasSeenActive = false
+      endedAt = null
+      endReason = null
+    }
+
+    const reason: EndReason | null = isDone(status) ? 'finished' : isStopped(status, nowSeconds) ? 'stopped' : null
+    if (isRunning(status, nowSeconds)) hasSeenActive = true
+
+    if (reason && endedAt === null) {
+      // Only a run we watched end gets the toast and the lingering result; an old finished run found at
+      // start-up is already "ended" long ago, so the band stays hidden.
+      endedAt = hasSeenActive ? nowSeconds : status.updated
+      endReason = reason
+      if (hasSeenActive) {
+        $.ui.toast(
+          reason === 'finished'
+            ? `Test run finished: ✓${status.totals.passed} passed, ✗${status.totals.failed} failed`
+            : `Test run stopped updating: ✓${status.totals.passed} ✗${status.totals.failed} of ${status.totals.total} done`,
+        )
+      }
+    }
+    if (!reason) {
+      // The run is active again (for example the runner started writing after a pause).
+      endedAt = null
+      endReason = null
+    }
+  }
+
+  const next: Snapshot = { status, error, path, endedAt, endReason }
   await update($, snap, () => next)
 
-  const status = next.status
   let line: string | undefined
-  if (status) {
-    line = isRunning(status)
-      ? `Tests ${summary(status, true)}`
-      : `Tests finished ✓${status.totals.passed} ✗${status.totals.failed}`
+  if (status && isVisible(next, nowSeconds)) {
+    line =
+      endedAt === null
+        ? `Tests ${summary(status, true)}`
+        : endReason === 'stopped'
+          ? `Tests stopped ✓${status.totals.passed} ✗${status.totals.failed} (${status.totals.done}/${status.totals.total})`
+          : `Tests finished ✓${status.totals.passed} ✗${status.totals.failed}`
   }
   if (line !== lastStatusLine) {
     lastStatusLine = line
     $.ui.status(line)
-  }
-
-  if (status) {
-    if (isRunning(status)) hasSeenRunning = true
-    if (status.phase === 'finished' && hasSeenRunning && lastPhase !== 'finished') {
-      $.ui.toast(`Test run finished: ✓${status.totals.passed} passed, ✗${status.totals.failed} failed`)
-      hasSeenRunning = false
-    }
-    lastPhase = status.phase
   }
 }
 
@@ -111,24 +169,27 @@ export const register: Register = (on, options) => {
     return { text: 'Test progress dashboard opened.' }
   })
 
-  // One line above the prompt while a run is going (or just finished).
+  // One line above the prompt while a run is going; after it ends the final result stays for a minute, then the band clears itself.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const s = await read($, snap)
     const status = s?.status
-    const isQuiet = e.props.hasSurvey || !status || (await read($, isHidden))
-    if (isQuiet || !status) return next(e)
+    const nowSeconds = (await $.clock.now()) / 1000
+    const isQuiet = e.props.hasSurvey || !status || (await read($, isHidden)) || !isVisible(s, nowSeconds)
+    if (isQuiet || !status || !s) return next(e)
 
     const { Box, Button, Text } = $.ui.resolve(e)
     const t = status.totals
-    const running = isRunning(status)
+    const ended = s.endedAt !== null
+    const stopped = s.endReason === 'stopped'
+    const label = !ended ? 'Tests ' : stopped ? 'Tests stopped ' : 'Tests finished '
 
     return (
       <Box>
-        <Text color={running ? 'suggestion' : t.failed > 0 ? 'warning' : 'success'}>
-          {running ? 'Tests ' : 'Tests done '}
+        <Text color={!ended ? 'suggestion' : stopped ? 'warning' : t.failed > 0 ? 'warning' : 'success'}>
+          {label}
           {bar(t.done, t.total, 20)} {percent(t.done, t.total)}{' '}
         </Text>
-        <Text dimColor>{summary(status, true)} </Text>
+        <Text dimColor>{summary(status, !ended)} </Text>
         <Button key="open" label="Dashboard" onPress={() => $.ui.open({ id: PANE, title: 'Test progress' })} />
         <Text> </Text>
         <Button key="hide" label="Hide" onPress={() => update($, isHidden, () => true)} />
@@ -158,7 +219,8 @@ export const register: Register = (on, options) => {
     const status = s.status
     const t = status.totals
     const nowSeconds = (await $.clock.now()) / 1000
-    const running = isRunning(status)
+    const running = isRunning(status, nowSeconds)
+    const stopped = s.endReason === 'stopped'
     const age = nowSeconds - status.updated
     const isStale = running && age > STALE_SECONDS
     const elapsed = status.started ? nowSeconds - status.started : null
@@ -176,8 +238,8 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column">
-        <Text bold color={running ? 'suggestion' : t.failed > 0 ? 'warning' : 'success'}>
-          {status.phase.toUpperCase()}
+        <Text bold color={running ? 'suggestion' : stopped ? 'warning' : t.failed > 0 ? 'warning' : 'success'}>
+          {running ? status.phase.toUpperCase() : stopped ? 'STOPPED' : 'FINISHED'}
           <Text dimColor>
             {status.build ? `  build ${status.build}` : ''}
             {status.started ? `  started ${clockTime(status.started)}` : ''}
@@ -187,6 +249,9 @@ export const register: Register = (on, options) => {
         </Text>
         {isStale && (
           <Text color="warning">No update for {duration(age)} - is the run still going?</Text>
+        )}
+        {stopped && (
+          <Text color="warning">The run stopped updating {duration(age)} ago, so the dashboard treats it as ended.</Text>
         )}
         {tokenLeft != null && running && (
           <Text color={tokenLeft < 600 ? 'error' : 'subtle'}>

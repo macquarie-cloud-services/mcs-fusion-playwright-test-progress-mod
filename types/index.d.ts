@@ -27,7 +27,17 @@ export type Status = {
   build?: string | null
 }
 
-export type Snapshot = { status: Status | null; error: string | null; path: string }
+/** Why the dashboard considers a run over: the runner said so / every test is done, or it stopped updating. */
+export type EndReason = 'finished' | 'stopped'
+
+export type Snapshot = {
+  status: Status | null
+  error: string | null
+  path: string
+  /** Epoch seconds when this run was first seen to have ended; null while it is active. */
+  endedAt: number | null
+  endReason: EndReason | null
+}
 
 declare module 'claude-code' {
   interface PluginState {
