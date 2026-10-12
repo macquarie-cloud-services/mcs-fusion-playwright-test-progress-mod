@@ -1,0 +1,18 @@
+{
+  "name": "mcs-playwright-test-progress-mod",
+  "version": "0.1.0",
+  "description": "Live dashboard for a Playwright (or any) test run: a pane, a progress band above the prompt and a status-line entry, read from a small status.json that the test runner writes.",
+  "author": {
+    "name": "MCS Fusion QA automation"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "statusFile": {
+      "type": "string",
+      "title": "Status file",
+      "description": "Path to the status.json the test run writes. Leave empty for ~/.claude/playwright-triage/status.json",
+      "default": ""
+    }
+  },
+  "license": "MIT"
+}

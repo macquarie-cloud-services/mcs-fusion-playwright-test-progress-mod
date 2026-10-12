@@ -1,0 +1,12 @@
+{
+  "name": "mcs-playwright-tools",
+  "description": "Small Claude Code mods for the MCS Fusion Playwright regression work.",
+  "owner": { "name": "MCS Fusion QA automation" },
+  "plugins": [
+    {
+      "name": "mcs-playwright-test-progress-mod",
+      "source": "./",
+      "description": "Live dashboard for a Playwright (or any) test run: pane, progress band and status line, read from a status.json the runner writes."
+    }
+  ]
+}

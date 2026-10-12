@@ -1,0 +1,26 @@
+{
+  "updated": 1791765696,
+  "started": 1791765000,
+  "phase": "running",
+  "build": "bin8",
+  "totals": { "total": 116, "done": 40, "passed": 31, "failed": 9, "skipped": 0 },
+  "eta_seconds": 1500,
+  "token_expires": 1791768600,
+  "lanes": [
+    {
+      "name": "L1",
+      "classes": ["Licensing", "Resources"],
+      "total": 29,
+      "done": 10,
+      "passed": 8,
+      "failed": 2,
+      "skipped": 0,
+      "finished": false,
+      "recent": [
+        { "outcome": "Passed", "test": "License_ActiveBaseLicense", "time": "41 s" },
+        { "outcome": "Failed", "test": "License_SubmitChangeBaseLicenseCount", "time": "1 m 6 s" }
+      ],
+      "failing": ["License_SubmitChangeBaseLicenseCount"]
+    }
+  ]
+}
