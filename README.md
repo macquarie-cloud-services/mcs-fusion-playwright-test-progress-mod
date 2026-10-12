@@ -12,7 +12,7 @@ It does not run tests. It only **reads one small JSON file** that your test runn
 ## Install
 
 ```
-/plugin install mcs-playwright-test-progress-mod --marketplace <owner>/<repo>
+/plugin install mcs-playwright-test-progress-mod --marketplace mcs-dave/mcs-fusion-playwright-test-progress-mod
 ```
 
 Answer `y` to add the marketplace, then pick a scope. The mod is active at once; no reload is needed.
