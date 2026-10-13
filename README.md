@@ -20,7 +20,7 @@ When a run is done - the runner writes `phase: "finished"`, every test has a res
 ## Install
 
 ```
-/plugin install mcs-playwright-test-progress-mod --marketplace mcs-dave/mcs-fusion-playwright-test-progress-mod
+/plugin install mcs-playwright-test-progress-mod --marketplace macquarie-cloud-services/mcs-fusion-playwright-test-progress-mod
 ```
 
 Answer `y` to add the marketplace, then pick a scope. The mod is active at once; no reload is needed. Open the dashboard with `/test-progress`.
